@@ -37,7 +37,7 @@ public struct Dependencies {
     }
     
     ///Tells if the storage has a value for the given key.
-    func hasInjectedValue<Key : EnvironmentKey>(forKey key: Key.Type) -> Bool {
+    public func hasInjectedValue<Key : EnvironmentKey>(forKey key: Key.Type) -> Bool {
         storage[String(describing: Key.self)] != nil
     }
     
