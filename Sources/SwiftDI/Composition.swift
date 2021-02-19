@@ -26,15 +26,22 @@ public struct DIBuilder {}
 
 
 ///A chain of DIParticipants.
-public struct Chain<Chain : DIParticipant> : DIParticipant {
+public struct Chain<Base : DIParticipant> : DIParticipant {
     
-    let base : Chain
+    let base : Base
     
-    public init(@DIBuilder content: () -> Chain) {
+    public init(@DIBuilder content: () -> Base) {
         self.base = content()
     }
     
-    public func inject(dependencies: Dependencies) -> Chain.Implementation {
+    public init?(@DIBuilder content: () -> Base?) {
+        guard let content = content() else {
+            return nil
+        }
+        base = content
+    }
+    
+    public func inject(dependencies: Dependencies) -> Base.Implementation {
         base.inject(dependencies: dependencies)
     }
     
