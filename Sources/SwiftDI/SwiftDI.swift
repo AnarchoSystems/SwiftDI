@@ -36,6 +36,11 @@ public struct Dependencies {
         }
     }
     
+    ///Tells if the storage has a value for the given key.
+    func hasInjectedValue<Key : EnvironmentKey>(forKey key: Key.Type) -> Bool {
+        storage[String(describing: Key.self)] != nil
+    }
+    
 }
 
 
@@ -79,6 +84,15 @@ public extension DIParticipant {
         Modified(base: self, value: value, kp: kp)
     }
     
+    
+    ///Modifies the environment for all nested objects.
+    /// - Parameters:
+    ///     - key: A key to the environment value to modify.
+    ///     - value: The new value to assign.
+    func environment<Key : EnvironmentKey>(_ key: Key.Type, value: Key.Value) -> KeyModified<Self, Key> {
+        KeyModified(base: self, value: value)
+    }
+    
 }
 
 
@@ -91,6 +105,20 @@ public struct Modified<Component : DIParticipant, Value> : DIParticipant {
     public func inject(dependencies: Dependencies) -> Component.Implementation {
         var dependencies = dependencies
         dependencies[keyPath: kp] = value
+        return base.inject(dependencies: dependencies)
+    }
+    
+}
+
+
+public struct KeyModified<Component : DIParticipant, Key : EnvironmentKey> : DIParticipant {
+    
+    let base : Component
+    let value : Key.Value
+    
+    public func inject(dependencies: Dependencies) -> Component.Implementation {
+        var dependencies = dependencies
+        dependencies[Key.self] = value
         return base.inject(dependencies: dependencies)
     }
     
