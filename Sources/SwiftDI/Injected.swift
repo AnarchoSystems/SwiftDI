@@ -18,9 +18,9 @@ public struct _Lens<Whole, Value> : Reader {
     }
     @usableFromInline
     let _wrappedValue : Box
-    private let _read : (Whole) -> Value
+    private let _read : @MainActor (Whole) -> Value
     
-    public init(_ read: @escaping (Whole) -> Value) {
+    public init(_ read: @escaping @MainActor (Whole) -> Value) {
         self._read = read
         self._wrappedValue = Box()
     }
@@ -29,6 +29,7 @@ public struct _Lens<Whole, Value> : Reader {
         self = _Lens({$0})
     }
     
+    @MainActor
     public func readValue(from environment: Any) {
         guard let environment = environment as? Whole else {return}
         _wrappedValue.value = _read(environment)
