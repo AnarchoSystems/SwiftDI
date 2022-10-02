@@ -1,125 +1,190 @@
 //
-//  SwiftDI.swift
-//  
+//  Environment.swift
 //
-//  Created by Markus Pfeifer on 12.02.21.
+//
+//  Created by Markus Kasperczyk on 02.10.22.
 //
 
 import Foundation
 
 
-//MARK: CORE
-
-
-///EnvironmentKey types are used mainly to provide safe subscript keys for Depencies.
-public protocol EnvironmentKey {
+/// Types conforming to ```Config``` define values that can be stored in the ```Dependencies```. If no value is stored, an appropriate default value will be computed from other dependencies.
+public protocol Config {
+    
     associatedtype Value
-    static var defaultValue : Value{get}
+    
+    /// Computes an appropriate default value given the rest of the environment.
+    /// - Parameters:
+    ///     - environment: The dependency graph that needs a default value.
+    @MainActor
+    static func value(given environment: Dependencies) -> Value
+    
 }
 
 
-///Dependencies are a wrapper type capable of storing all kinds of values in a safe manner.
+/// Types conforming to ```Config``` define values that can be stored in the ```Dependencies```. If no value is stored, the static default value from this protocol will be assumed.
+public protocol Dependency : Config where StaticValue == Value {
+    associatedtype StaticValue
+    
+    /// The default value, if nothing else is stored.
+    static var defaultValue : StaticValue {get}
+}
+
+
+public extension Dependency {
+    @MainActor
+    static func value(given: Dependencies) -> Value {
+        defaultValue
+    }
+}
+
+
+/// ```Dependencies``` Wrap the app's constants configured from outside. Values can be accessed via a subscript taking a type that conforms to ```Config```:
+/// ```
+/// public extension Dependencies {
+///
+///   var myValue : MyType {
+///         get {self[MyKey.self]}
+///         set {self[MyKey.self] = newValue}
+///   }
+///
+/// }
+/// ```
+/// - Note: If you read a value that isn't stored in the underlying dictionary, the default value is assumed. The value will then be memoized and shared across all copies. As a result, if the dependency itself has reference semantics, it will be retained after the first read.
+/// - Important: The way memoization is implemented requires properties to be read on the main thread. Failing to read not-yet memoized dependencies on the main thread is undefined behavior and may lead to crashes due to overlapping memory access.
+@MainActor
 public struct Dependencies {
     
-    public init(){}
+    @usableFromInline
+    var dict = SwiftMutableDict()
     
-    ///The backing storage of all the values.
-    private var storage : [String : Any] = [:]
+    @inlinable
+    public init() {}
     
-    ///This is a type-safe interface to access stored values.
-    public subscript<K : EnvironmentKey>(_ key: K.Type) -> K.Value {
+    @inlinable
+    @MainActor
+    public subscript<Key : Config>(key: Key.Type) -> Key.Value {
         get {
-            storage[String(describing: K.self)] as? K.Value ?? K.defaultValue
+            if let result = dict.dict[String(describing: key)] as? Key.Value {
+                return result
+            }
+            else {
+                let result = Key.value(given: self)
+                //memoization -- reference semantics is appropriate
+                dict.dict[String(describing: key)] = result
+                return result
+            }
         }
         set {
-            storage[String(describing: K.self)] = newValue
+            if
+                !isKnownUniquelyReferenced(&dict) {
+                self.dict = dict.copy()
+            }
+            dict.dict[String(describing: key)] = newValue
         }
     }
     
-    ///Tells if the storage has a value for the given key.
-    public func hasInjectedValue<Key : EnvironmentKey>(forKey key: Key.Type) -> Bool {
-        storage[String(describing: Key.self)] != nil
+    @MainActor
+    func hasStoredValue<Key : Config>(for key: Key.Type) -> Bool {
+        dict.dict[String(describing: key)] != nil
+    }
+    
+}
+
+@usableFromInline
+class SwiftMutableDict {
+    @usableFromInline
+    @MainActor
+    var dict : [String : Any] = [:]
+    @inlinable
+    init(){}
+    @inlinable
+    @MainActor
+    func copy() -> SwiftMutableDict {
+        let result = SwiftMutableDict()
+        result.dict = dict
+        return result
+    }
+}
+
+public struct Bind {
+    
+    @usableFromInline
+    let update : (inout Dependencies) -> Void
+    @inlinable
+    init(update: @escaping (inout Dependencies) -> Void) {
+        self.update = update
     }
     
 }
 
 
-//MARK: INJECTION
-
-
-///A DIParticipant enables passing around dependencies throughout your object hierarchy implicitly.
-public protocol DIParticipant {
+public extension Bind {
     
-    ///The object type injected by this DI Participant.
-    associatedtype Implementation
+    init<Value>(_ keyPath: WritableKeyPath<Dependencies, Value>, to value: Value) {
+        self.update = {env in env[keyPath: keyPath] = value}
+    }
     
-    ///Constructs the desired object.
-    /// - Parameters:
-    ///     - dependencies: The object's global dependencies.
-    func inject(dependencies: Dependencies) -> Implementation
+    init(@EnvironmentBuilder _ transform: @escaping (Dependencies) -> Bind) {
+        self.update = {env in transform(env).update(&env)}
+    }
     
-}
-
-
-public extension DIParticipant {
-    
-    ///Constructs the desired object using the default environment.
-    func inject() -> Implementation {
-        inject(dependencies: Dependencies())
+    func then(_ transform: @escaping (Dependencies) -> Bind) -> Bind {
+        Bind {(env: inout Dependencies) in
+            update(&env)
+            transform(env).update(&env)
+        }
     }
     
 }
 
 
-//MARK: MODIFICATION
-
-
-public extension DIParticipant {
+@resultBuilder
+public enum EnvironmentBuilder {
     
-    ///Modifies the environment for all nested objects.
-    /// - Parameters:
-    ///     - kp: A keypath to the environment value to modify.
-    ///     - value: The new value to assign.
-    func environment<Value>(_ kp: WritableKeyPath<Dependencies, Value>, value: Value) -> Modified<Self, Value> {
-        Modified(base: self, value: value, kp: kp)
+    public static func buildBlock(_ components: Bind...) -> Bind {
+        buildArray(components)
     }
     
-    
-    ///Modifies the environment for all nested objects.
-    /// - Parameters:
-    ///     - key: A key to the environment value to modify.
-    ///     - value: The new value to assign.
-    func environment<Key : EnvironmentKey>(_ key: Key.Type, value: Key.Value) -> KeyModified<Self, Key> {
-        KeyModified(base: self, value: value)
+    public static func buildEither(first component: Bind) -> Bind {
+        component
     }
     
-}
-
-
-public struct Modified<Component : DIParticipant, Value> : DIParticipant {
+    public static func buildEither(second component: Bind) -> Bind {
+        component
+    }
     
-    let base : Component
-    let value : Value
-    let kp : WritableKeyPath<Dependencies, Value>
+    public static func buildOptional(_ component: Bind?) -> Bind {
+        component ?? Bind(update: {_ in })
+    }
     
-    public func inject(dependencies: Dependencies) -> Component.Implementation {
-        var dependencies = dependencies
-        dependencies[keyPath: kp] = value
-        return base.inject(dependencies: dependencies)
+    public static func buildArray(_ components: [Bind]) -> Bind {
+        components.reduce(Bind(update: {_ in }), {b1, b2 in b1.then{_ in b2}})
+    }
+    
+    public static func buildLimitedAvailability(_ component: Bind) -> Bind {
+        component
     }
     
 }
 
 
-public struct KeyModified<Component : DIParticipant, Key : EnvironmentKey> : DIParticipant {
+extension Dependencies : ExpressibleByArrayLiteral {
     
-    let base : Component
-    let value : Key.Value
+    nonisolated public init(arrayLiteral elements: Bind...) {
+        EnvironmentBuilder.buildArray(elements).update(&self)
+    }
     
-    public func inject(dependencies: Dependencies) -> Component.Implementation {
-        var dependencies = dependencies
-        dependencies[Key.self] = value
-        return base.inject(dependencies: dependencies)
+}
+
+
+public extension Dependencies {
+    
+    
+    init(@EnvironmentBuilder content: () -> Bind) {
+        self = Dependencies()
+        let bind = content()
+        bind.update(&self)
     }
     
 }
