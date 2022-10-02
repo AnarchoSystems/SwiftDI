@@ -109,9 +109,9 @@ class SwiftMutableDict {
 public struct Bind {
     
     @usableFromInline
-    let update : (inout Dependencies) -> Void
+    let update : @MainActor (inout Dependencies) -> Void
     @inlinable
-    init(update: @escaping (inout Dependencies) -> Void) {
+    init(update: @MainActor @escaping (inout Dependencies) -> Void) {
         self.update = update
     }
     
@@ -126,6 +126,10 @@ public extension Bind {
     
     init(@EnvironmentBuilder _ transform: @escaping (Dependencies) -> Bind) {
         self.update = {env in transform(env).update(&env)}
+    }
+    
+    init<Conf : Config>(_ type: Conf.Type, to value: Conf.Value) {
+        self.update = {env in env[type.self] = value}
     }
     
     func then(_ transform: @escaping (Dependencies) -> Bind) -> Bind {
@@ -170,7 +174,8 @@ public enum EnvironmentBuilder {
 
 extension Dependencies : ExpressibleByArrayLiteral {
     
-    nonisolated public init(arrayLiteral elements: Bind...) {
+    @MainActor
+    public init(arrayLiteral elements: Bind...) {
         EnvironmentBuilder.buildArray(elements).update(&self)
     }
     
@@ -179,7 +184,7 @@ extension Dependencies : ExpressibleByArrayLiteral {
 
 public extension Dependencies {
     
-    
+    @MainActor
     init(@EnvironmentBuilder content: () -> Bind) {
         self = Dependencies()
         let bind = content()
