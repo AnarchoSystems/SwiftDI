@@ -33,6 +33,7 @@ public struct _Lens<Whole, Value> : Reader {
     public func readValue(from environment: Any) {
         guard let environment = environment as? Whole else {return}
         _wrappedValue.value = _read(environment)
+        inject(environment: environment, to: _wrappedValue.value!)
     }
  
     @usableFromInline
