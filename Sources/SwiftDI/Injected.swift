@@ -31,11 +31,12 @@ public struct _Lens<Whole, Value> : Reader {
     
     @MainActor
     public func readValue(from environment: Any) {
-        guard let environment = environment as? Whole else {return}
+        guard _wrappedValue.value == nil,
+              let environment = environment as? Whole else {return}
         _wrappedValue.value = _read(environment)
         inject(environment: environment, to: _wrappedValue.value!)
     }
- 
+    
     @usableFromInline
     internal final class Box {
         @usableFromInline
@@ -45,7 +46,44 @@ public struct _Lens<Whole, Value> : Reader {
 }
 
 
-public typealias Injected<Value> = _Lens<Dependencies, Value>
+public typealias Constant<Value> = _Lens<Dependencies, Value>
+
+
+@propertyWrapper
+public struct _Reference<Whole, Value : AnyObject> : Reader {
+    
+    @inlinable
+    public var wrappedValue : Value {
+        _wrappedValue.value!
+    }
+    
+    @usableFromInline
+    let _wrappedValue : Box
+    private let _read : @MainActor (Whole) -> Value
+    
+    public init(_ read: @escaping @MainActor (Whole) -> Value) {
+        self._read = read
+        self._wrappedValue = Box()
+    }
+    
+    @MainActor
+    public func readValue(from environment: Any) {
+        guard _wrappedValue.value == nil,
+              let environment = environment as? Whole else {return}
+        _wrappedValue.value = _read(environment)
+        inject(environment: environment, to: _wrappedValue.value!)
+    }
+    
+    @usableFromInline
+    final class Box {
+        @usableFromInline weak var value : Value?
+    }
+    
+}
+
+
+public typealias Injected<Value : AnyObject> = _Reference<Dependencies, Value>
+
 
 public func inject<Whole>(environment: Whole, to object: Any) {
     
